@@ -38,6 +38,9 @@
 #include <map>
 #include <unordered_map>
 
+#include <memory>
+class CreatureOutfit;
+
 class Item;
 class Unit;
 class Vehicle;
@@ -940,6 +943,7 @@ class PlayerDumpReader;
 class TC_GAME_API ObjectMgr
 {
     friend class PlayerDumpReader;
+    friend class UnitTestDataLoader;
 
     private:
         ObjectMgr();
@@ -971,6 +975,8 @@ class TC_GAME_API ObjectMgr
         typedef std::vector<std::string> ScriptNameContainer;
 
         typedef std::map<uint32, uint32> CharacterConversionMap;
+
+        typedef std::unordered_map<uint32, std::shared_ptr<CreatureOutfit>> CreatureOutfitContainer;
 
         GameObjectTemplate const* GetGameObjectTemplate(uint32 entry) const;
         GameObjectTemplateContainer const& GetGameObjectTemplates() const { return _gameObjectTemplateStore; }
@@ -1488,6 +1494,11 @@ class TC_GAME_API ObjectMgr
         bool AddGameTele(GameTele& data);
         bool DeleteGameTele(std::string const& name);
 
+        const CreatureOutfitContainer& GetCreatureOutfitMap() const { return _creatureOutfitStore; }
+        std::shared_ptr<CreatureOutfit> const & GetOutfit(uint32 modelid) const;
+        uint32 GetRealDisplayId(uint32 modelid) const;
+        void LoadCreatureOutfits();
+
         Trainer::Trainer const* GetTrainer(uint32 creatureId) const;
 
         VendorItemData const* GetNpcVendorItemList(uint32 entry) const
@@ -1535,10 +1546,17 @@ class TC_GAME_API ObjectMgr
         GraveyardContainer GraveyardStore;
 
         static void AddLocaleString(std::string&& value, LocaleConstant localeConstant, std::vector<std::string>& data);
-        static inline void GetLocaleString(std::vector<std::string> const& data, LocaleConstant localeConstant, std::string& value)
+        static std::string_view GetLocaleString(std::vector<std::string> const& data, size_t locale)
         {
-            if (data.size() > size_t(localeConstant) && !data[localeConstant].empty())
-                value = data[localeConstant];
+            if (locale < data.size())
+                return data[locale];
+            else
+                return {};
+        }
+        static void GetLocaleString(std::vector<std::string> const& data, LocaleConstant localeConstant, std::string& value)
+        {
+            if (std::string_view str = GetLocaleString(data, static_cast<size_t>(localeConstant)); !str.empty())
+                value.assign(str);
         }
 
         CharacterConversionMap FactionChangeAchievements;
@@ -1641,6 +1659,8 @@ class TC_GAME_API ObjectMgr
 
         PageTextContainer _pageTextStore;
         InstanceTemplateContainer _instanceTemplateStore;
+
+        CreatureOutfitContainer _creatureOutfitStore;
 
     private:
         void LoadScripts(ScriptsType type);

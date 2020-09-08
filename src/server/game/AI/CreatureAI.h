@@ -82,18 +82,19 @@ class TC_GAME_API CreatureAI : public UnitAI
 
         bool UpdateVictim();
 
-        Creature* DoSummon(uint32 entry, Position const& pos, uint32 despawnTime = 30000, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
-        Creature* DoSummon(uint32 entry, WorldObject* obj, float radius = 5.0f, uint32 despawnTime = 30000, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
-        Creature* DoSummonFlyer(uint32 entry, WorldObject* obj, float flightZ, float radius = 5.0f, uint32 despawnTime = 30000, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
+        Creature* DoSummon(uint32 entry, Position const& pos, Milliseconds despawnTime = 30s, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
+        Creature* DoSummon(uint32 entry, WorldObject* obj, float radius = 5.0f, Milliseconds despawnTime = 30s, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
+        Creature* DoSummonFlyer(uint32 entry, WorldObject* obj, float flightZ, float radius = 5.0f, Milliseconds despawnTime = 30s, TempSummonType summonType = TEMPSUMMON_CORPSE_TIMED_DESPAWN);
 
     public:
+        // EnumUtils: DESCRIBE THIS (in CreatureAI::)
         enum EvadeReason
         {
             EVADE_REASON_NO_HOSTILES,       // the creature's threat list is empty
             EVADE_REASON_BOUNDARY,          // the creature has moved outside its evade boundary
             EVADE_REASON_NO_PATH,           // the creature was unable to reach its target for over 5 seconds
             EVADE_REASON_SEQUENCE_BREAK,    // this is a boss and the pre-requisite encounters for engaging it are not defeated yet
-            EVADE_REASON_OTHER
+            EVADE_REASON_OTHER,             // anything else
         };
 
         explicit CreatureAI(Creature* creature);
@@ -215,7 +216,6 @@ class TC_GAME_API CreatureAI : public UnitAI
 
         /// == Waypoints system =============================
 
-        virtual void WaypointPathStarted(uint32 /*pathId*/) { }
         virtual void WaypointStarted(uint32 /*nodeId*/, uint32 /*pathId*/) { }
         virtual void WaypointReached(uint32 /*nodeId*/, uint32 /*pathId*/) { }
         virtual void WaypointPathEnded(uint32 /*nodeId*/, uint32 /*pathId*/) { }
@@ -234,7 +234,7 @@ class TC_GAME_API CreatureAI : public UnitAI
         virtual PlayerAI* GetAIForCharmedPlayer(Player* /*who*/) { return nullptr; }
 
         // intended for encounter design/debugging. do not use for other purposes. expensive.
-        int32 VisualizeBoundary(uint32 duration, Unit* owner = nullptr, bool fill = false) const;
+        int32 VisualizeBoundary(Seconds duration, Unit* owner = nullptr, bool fill = false) const;
 
         // boundary system methods
         virtual bool CheckInRoom();

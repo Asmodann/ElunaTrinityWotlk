@@ -27,6 +27,7 @@
 #include "Language.h"
 #include "Log.h"
 #include "Mail.h"
+#include "Map.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -41,6 +42,11 @@ void WorldSession::HandleAuctionHelloOpcode(WorldPacket& recvData)
     ObjectGuid guid;                                            //NPC guid
     recvData >> guid;
 
+#ifndef DISABLE_DRESSNPCS_CORESOUNDS
+    if (guid.IsAnyTypeCreature())
+        if (Creature* creature = _player->GetMap()->GetCreature(guid))
+            creature->SendMirrorSound(_player, 0);
+#endif
     Creature* unit = GetPlayer()->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_AUCTIONEER);
     if (!unit)
     {
@@ -70,7 +76,7 @@ void WorldSession::SendAuctionHello(ObjectGuid guid, Creature* unit)
 
     WorldPacket data(MSG_AUCTION_HELLO, 12);
     data << uint64(guid);
-    data << uint32(ahEntry->houseId);
+    data << uint32(ahEntry->ID);
     data << uint8(1);                                       // 3.3.3: 1 - AH enabled, 0 - AH disabled
     SendPacket(&data);
 }
@@ -286,7 +292,7 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
         }
 
         AuctionHouseEntry const* AHEntry = sAuctionMgr->GetAuctionHouseEntry(auctioneerInfo->faction);
-        AH->houseId = AHEntry->houseId;
+        AH->houseId = AHEntry->ID;
     }
 
     // Required stack size of auction matches to current item stack size, just move item to auctionhouse

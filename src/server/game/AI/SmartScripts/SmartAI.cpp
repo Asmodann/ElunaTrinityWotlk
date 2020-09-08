@@ -72,8 +72,6 @@ void SmartAI::StartPath(bool run/* = false*/, uint32 pathId/* = 0*/, bool repeat
         me->SetFlag(UNIT_NPC_FLAGS, 0);
     }
 
-    GetScript()->ProcessEventsFor(SMART_EVENT_WAYPOINT_START, nullptr, _currentWaypointNode, GetScript()->GetPathId());
-
     me->GetMotionMaster()->MovePath(_path, _repeatWaypointPath);
 }
 
@@ -342,20 +340,9 @@ bool SmartAI::IsEscortInvokerInRange()
     return true;
 }
 
-///@todo move escort related logic
-void SmartAI::WaypointPathStarted(uint32 pathId)
+void SmartAI::WaypointStarted(uint32 nodeId, uint32 pathId)
 {
-    if (!HasEscortState(SMART_ESCORT_ESCORTING))
-    {
-        // @todo remove the constant 1 at some point, it's never anything different
-        GetScript()->ProcessEventsFor(SMART_EVENT_WAYPOINT_START, nullptr, 1, pathId);
-        return;
-    }
-}
-
-///@todo Implement new smart event SMART_EVENT_WAYPOINT_STARTED
-void SmartAI::WaypointStarted(uint32 /*nodeId*/, uint32 /*pathId*/)
-{
+    GetScript()->ProcessEventsFor(SMART_EVENT_WAYPOINT_START, nullptr, nodeId, pathId);
 }
 
 void SmartAI::WaypointReached(uint32 nodeId, uint32 pathId)
@@ -786,7 +773,7 @@ void SmartAI::QuestReward(Player* player, Quest const* quest, uint32 opt)
     GetScript()->ProcessEventsFor(SMART_EVENT_REWARD_QUEST, player, quest->GetQuestId(), opt);
 }
 
-void SmartAI::SetCombatMove(bool on)
+void SmartAI::SetCombatMove(bool on, bool stopMoving)
 {
     if (_canCombatMove == on)
         return;
@@ -801,19 +788,23 @@ void SmartAI::SetCombatMove(bool on)
         if (on)
         {
             if (!me->HasReactState(REACT_PASSIVE) && me->GetVictim() && !me->GetMotionMaster()->HasMovementGenerator([](MovementGenerator const* movement) -> bool
-            {
-                return movement->GetMovementGeneratorType() == CHASE_MOTION_TYPE && movement->Mode == MOTION_MODE_DEFAULT && movement->Priority == MOTION_PRIORITY_NORMAL;
-            }))
+                {
+                    return movement->GetMovementGeneratorType() == CHASE_MOTION_TYPE && movement->Mode == MOTION_MODE_DEFAULT && movement->Priority == MOTION_PRIORITY_NORMAL;
+                }))
             {
                 SetRun(_run);
                 me->GetMotionMaster()->MoveChase(me->GetVictim());
             }
         }
         else if (MovementGenerator* movement = me->GetMotionMaster()->GetMovementGenerator([](MovementGenerator const* a) -> bool
+            {
+                return a->GetMovementGeneratorType() == CHASE_MOTION_TYPE && a->Mode == MOTION_MODE_DEFAULT && a->Priority == MOTION_PRIORITY_NORMAL;
+            }))
         {
-            return a->GetMovementGeneratorType() == CHASE_MOTION_TYPE && a->Mode == MOTION_MODE_DEFAULT && a->Priority == MOTION_PRIORITY_NORMAL;
-        }))
             me->GetMotionMaster()->Remove(movement);
+            if (stopMoving)
+                me->StopMoving();
+        }
     }
 }
 
@@ -1123,10 +1114,10 @@ class SmartTrigger : public AreaTriggerScript
             if (!player->IsAlive())
                 return false;
 
-            TC_LOG_DEBUG("scripts.ai", "AreaTrigger %u is using SmartTrigger script", trigger->id);
+            TC_LOG_DEBUG("scripts.ai", "AreaTrigger %u is using SmartTrigger script", trigger->ID);
             SmartScript script;
             script.OnInitialize(player, trigger);
-            script.ProcessEventsFor(SMART_EVENT_AREATRIGGER_ONTRIGGER, player, trigger->id);
+            script.ProcessEventsFor(SMART_EVENT_AREATRIGGER_ONTRIGGER, player, trigger->ID);
             return true;
         }
 };

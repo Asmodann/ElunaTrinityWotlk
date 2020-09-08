@@ -22,6 +22,7 @@
 #include "CreatureAI.h"
 #include "CreatureAISelector.h"
 #include "CreatureGroups.h"
+#include "CreatureOutfit.h"
 #include "DatabaseEnv.h"
 #include "Formulas.h"
 #include "GameEventMgr.h"
@@ -244,7 +245,7 @@ CreatureBaseStats const* CreatureBaseStats::GetBaseStats(uint8 level, uint8 unit
 
 bool ForcedDespawnDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
 {
-    m_owner.DespawnOrUnsummon(0, m_respawnTimer);    // since we are here, we are not TempSummon as object type cannot change during runtime
+    m_owner.DespawnOrUnsummon(0s, m_respawnTimer);    // since we are here, we are not TempSummon as object type cannot change during runtime
     return true;
 }
 
@@ -316,6 +317,49 @@ void Creature::RemoveFromWorld()
 
         TC_LOG_DEBUG("entities.unit", "Removing creature %s with DBGUID %u to world in map %u", GetGUID().ToString().c_str(), m_spawnId, GetMap()->GetId());
         GetMap()->GetObjectsStore().Remove<Creature>(GetGUID());
+    }
+}
+
+void Creature::SetOutfit(std::shared_ptr<CreatureOutfit> const & outfit)
+{
+    // Set new outfit
+    if (m_outfit)
+    {
+        // if had old outfit
+        // then delay displayid setting to allow equipment
+        // to change by using invisible model in between
+        SetDisplayId(CreatureOutfit::invisible_model);
+        m_outfit = outfit;
+    }
+    else
+    {
+        // else set new outfit directly since we change from non-outfit->outfit
+        m_outfit = outfit;
+        SetDisplayId(outfit->GetDisplayId());
+    }
+}
+
+void Creature::SendMirrorSound(Player* target, uint8 type)
+{
+    std::shared_ptr<CreatureOutfit> const & outfit = GetOutfit();
+    if (!outfit)
+        return;
+    if (!outfit->npcsoundsid)
+        return;
+    if (auto const* npcsounds = sNPCSoundsStore.LookupEntry(outfit->npcsoundsid))
+    {
+        switch (type)
+        {
+        case 0:
+            PlayDistanceSound(npcsounds->hello, target);
+            break;
+        case 1:
+            PlayDistanceSound(npcsounds->goodbye, target);
+            break;
+        case 2:
+            PlayDistanceSound(npcsounds->pissed, target);
+            break;
+        }
     }
 }
 
@@ -566,6 +610,9 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
 
     SetUInt32Value(UNIT_FIELD_FLAGS, unit_flags);
     SetUInt32Value(UNIT_FIELD_FLAGS_2, cInfo->unit_flags2);
+    bool needsflag = m_outfit && Unit::GetDisplayId() == m_outfit->GetDisplayId();
+    if (needsflag)
+        SetMirrorImageFlag(true);
 
     SetUInt32Value(UNIT_DYNAMIC_FLAGS, dynamicflags);
 
@@ -600,7 +647,7 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
 
     // checked and error show at loading templates
     if (FactionTemplateEntry const* factionTemplate = sFactionTemplateStore.LookupEntry(cInfo->faction))
-        SetPvP((factionTemplate->factionFlags & FACTION_TEMPLATE_FLAG_PVP) != 0);
+        SetPvP((factionTemplate->Flags & FACTION_TEMPLATE_FLAG_PVP) != 0);
 
     // updates spell bars for vehicles and set player's faction - should be called here, to overwrite faction that is set from the new template
     if (IsVehicle())
@@ -623,6 +670,8 @@ bool Creature::UpdateEntry(uint32 entry, CreatureData const* data /*= nullptr*/,
         ApplySpellImmune(0, IMMUNITY_STATE, SPELL_AURA_MOD_TAUNT, true);
         ApplySpellImmune(0, IMMUNITY_EFFECT, SPELL_EFFECT_ATTACK_ME, true);
     }
+
+    SetIgnoringCombat((cInfo->flags_extra & CREATURE_FLAG_EXTRA_NO_COMBAT) != 0);
 
     LoadTemplateRoot();
     InitializeMovementFlags();
@@ -658,6 +707,13 @@ void Creature::SetPhaseMask(uint32 newPhaseMask, bool update)
 
 void Creature::Update(uint32 diff)
 {
+    if (m_outfit && !_changesMask.GetBit(UNIT_FIELD_DISPLAYID) && Unit::GetDisplayId() == CreatureOutfit::invisible_model)
+    {
+        // has outfit, displayid is invisible and displayid update already sent to clients
+        // set outfit display
+        SetDisplayId(m_outfit->GetDisplayId());
+    }
+
     if (IsAIEnabled() && m_triggerJustAppeared && m_deathState != DEAD)
     {
         if (m_respawnCompatibilityMode && m_vehicleKit)
@@ -1877,7 +1933,7 @@ bool Creature::CanStartAttack(Unit const* who, bool force) const
         if (!_IsTargetAcceptable(who))
             return false;
 
-        if (!force && (IsNeutralToAll() || !IsWithinDistInMap(who, GetAttackDistance(who) + m_CombatDistance)))
+        if (IsNeutralToAll() || !IsWithinDistInMap(who, GetAttackDistance(who) + m_CombatDistance))
             return false;
     }
 
@@ -1960,6 +2016,7 @@ void Creature::setDeathState(DeathState s)
         uint32 respawnDelay = m_respawnDelay;
         if (uint32 scalingMode = sWorld->getIntConfig(CONFIG_RESPAWN_DYNAMICMODE))
             GetMap()->ApplyDynamicModeRespawnScaling(this, m_spawnId, respawnDelay, scalingMode);
+
         // @todo remove the boss respawn time hack in a dynspawn follow-up once we have creature groups in instances
         if (m_respawnCompatibilityMode)
         {
@@ -1994,8 +2051,9 @@ void Creature::setDeathState(DeathState s)
         if (m_formation && m_formation->GetLeader() == this)
             m_formation->FormationReset(true);
 
-        bool needsFalling = IsFlying() || IsHovering();
-        SetHover(false);
+        bool needsFalling = (IsFlying() || IsHovering()) && !IsUnderWater();
+        SetHover(false, false);
+        SetDisableGravity(false, false);
 
         if (needsFalling)
             GetMotionMaster()->MoveFall();
@@ -2108,7 +2166,7 @@ void Creature::ForcedDespawn(uint32 timeMSToDespawn, Seconds forceRespawnTimer)
 {
     if (timeMSToDespawn)
     {
-        m_Events.AddEvent(new ForcedDespawnDelayEvent(*this, forceRespawnTimer), m_Events.CalculateTime(timeMSToDespawn));
+        m_Events.AddEvent(new ForcedDespawnDelayEvent(*this, forceRespawnTimer), m_Events.CalculateTime(Milliseconds(timeMSToDespawn)));
         return;
     }
 
@@ -2156,12 +2214,12 @@ void Creature::ForcedDespawn(uint32 timeMSToDespawn, Seconds forceRespawnTimer)
     }
 }
 
-void Creature::DespawnOrUnsummon(uint32 msTimeToDespawn /*= 0*/, Seconds forceRespawnTimer /*= 0*/)
+void Creature::DespawnOrUnsummon(Milliseconds timeToDespawn /*= 0s*/, Seconds forceRespawnTimer /*= 0s*/)
 {
     if (TempSummon* summon = ToTempSummon())
-        summon->UnSummon(msTimeToDespawn);
+        summon->UnSummon(timeToDespawn.count());
     else
-        ForcedDespawn(msTimeToDespawn, forceRespawnTimer);
+        ForcedDespawn(timeToDespawn.count(), forceRespawnTimer);
 }
 
 void Creature::LoadTemplateImmunities()
@@ -2311,7 +2369,7 @@ void Creature::CallAssistance()
                     e->AddAssistant((*assistList.begin())->GetGUID());
                     assistList.pop_front();
                 }
-                m_Events.AddEvent(e, m_Events.CalculateTime(sWorld->getIntConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_DELAY)));
+                m_Events.AddEvent(e, m_Events.CalculateTime(Milliseconds(sWorld->getIntConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_DELAY))));
             }
         }
     }
@@ -2524,7 +2582,8 @@ bool Creature::LoadCreaturesAddon()
         //SetByteValue(UNIT_FIELD_BYTES_1, UNIT_BYTES_1_OFFSET_PET_TALENTS, uint8((cainfo->bytes1 >> 8) & 0xFF));
         SetByteValue(UNIT_FIELD_BYTES_1, UNIT_BYTES_1_OFFSET_PET_TALENTS, 0);
         SetByteValue(UNIT_FIELD_BYTES_1, UNIT_BYTES_1_OFFSET_VIS_FLAG, uint8((cainfo->bytes1 >> 16) & 0xFF));
-        SetByteValue(UNIT_FIELD_BYTES_1, UNIT_BYTES_1_OFFSET_ANIM_TIER, uint8((cainfo->bytes1 >> 24) & 0xFF));
+
+        SetAnimationTier(static_cast<AnimationTier>((cainfo->bytes1 >> 24) & 0xFF));
 
         //! Suspected correlation between UNIT_FIELD_BYTES_1, offset 3, value 0x2:
         //! If no inhabittype_fly (if no MovementFlag_DisableGravity or MovementFlag_CanFly flag found in sniffs)
@@ -2892,12 +2951,22 @@ bool Creature::SetWalk(bool enable)
     return true;
 }
 
-bool Creature::SetDisableGravity(bool disable, bool packetOnly/*=false*/)
+bool Creature::SetDisableGravity(bool disable, bool packetOnly /*=false*/, bool updateAnimationTier /*= true*/)
 {
     //! It's possible only a packet is sent but moveflags are not updated
     //! Need more research on this
-    if (!packetOnly && !Unit::SetDisableGravity(disable))
+    if (!packetOnly && !Unit::SetDisableGravity(disable, packetOnly, updateAnimationTier))
         return false;
+
+    if (updateAnimationTier && IsAlive() && !HasUnitState(UNIT_STATE_ROOT) && !GetMovementTemplate().IsRooted())
+    {
+        if (IsGravityDisabled())
+            SetAnimationTier(AnimationTier::Fly);
+        else if (IsHovering())
+            SetAnimationTier(AnimationTier::Hover);
+        else
+            SetAnimationTier(AnimationTier::Ground);
+    }
 
     if (!movespline->Initialized())
         return true;
@@ -2964,10 +3033,20 @@ bool Creature::SetFeatherFall(bool enable, bool packetOnly /* = false */)
     return true;
 }
 
-bool Creature::SetHover(bool enable, bool packetOnly /*= false*/)
+bool Creature::SetHover(bool enable, bool packetOnly /*= false*/, bool updateAnimationTier /*= true*/)
 {
-    if (!packetOnly && !Unit::SetHover(enable))
+    if (!packetOnly && !Unit::SetHover(enable, packetOnly, updateAnimationTier))
         return false;
+
+    if (updateAnimationTier && IsAlive() && !HasUnitState(UNIT_STATE_ROOT) && !GetMovementTemplate().IsRooted())
+    {
+        if (IsGravityDisabled())
+            SetAnimationTier(AnimationTier::Fly);
+        else if (IsHovering())
+            SetAnimationTier(AnimationTier::Hover);
+        else
+            SetAnimationTier(AnimationTier::Ground);
+    }
 
     if (!movespline->Initialized())
         return true;
@@ -3059,7 +3138,45 @@ void Creature::SetObjectScale(float scale)
     }
 }
 
+uint32 Creature::GetDisplayId() const
+{
+    if (m_outfit && m_outfit->GetId())
+        return m_outfit->GetId();
+    return Unit::GetDisplayId();
+}
+
 void Creature::SetDisplayId(uint32 modelId)
+{
+    if (auto const & outfit = sObjectMgr->GetOutfit(modelId))
+    {
+        SetOutfit(outfit);
+        return;
+    }
+    else
+    {
+        if (m_outfit)
+        {
+            // if has outfit
+            if (modelId != m_outfit->GetDisplayId())
+            {
+                // and outfit's real modelid doesnt match modelid being set
+                // remove outfit and continue setting the new model
+                m_outfit.reset();
+                SetMirrorImageFlag(false);
+            }
+            else
+            {
+                // outfit's real modelid being set
+                // add flags and continue setting the model
+                SetMirrorImageFlag(true);
+            }
+        }
+    }
+
+    SetDisplayIdRaw(modelId);
+}
+
+void Creature::SetDisplayIdRaw(uint32 modelId)
 {
     Unit::SetDisplayId(modelId);
 

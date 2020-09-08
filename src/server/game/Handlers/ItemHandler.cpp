@@ -23,6 +23,7 @@
 #include "Opcodes.h"
 #include "Item.h"
 #include "Log.h"
+#include "Map.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "SpellInfo.h"
@@ -601,6 +602,11 @@ void WorldSession::HandleListInventoryOpcode(WorldPacket& recvData)
 
     TC_LOG_DEBUG("network", "WORLD: Recvd CMSG_LIST_INVENTORY");
 
+#ifndef DISABLE_DRESSNPCS_CORESOUNDS
+    if (guid.IsAnyTypeCreature())
+        if (Creature* creature = _player->GetMap()->GetCreature(guid))
+            creature->SendMirrorSound(_player, 0);
+#endif
     SendListInventory(guid);
 }
 
@@ -991,11 +997,11 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recvData)
         }
 
         // tried to put normal gem in meta socket
-        if (itemProto->Socket[i].Color == SOCKET_COLOR_META && GemProps[i]->color != SOCKET_COLOR_META)
+        if (itemProto->Socket[i].Color == SOCKET_COLOR_META && GemProps[i]->Type != SOCKET_COLOR_META)
             return;
 
         // tried to put meta gem in normal socket
-        if (itemProto->Socket[i].Color != SOCKET_COLOR_META && GemProps[i]->color == SOCKET_COLOR_META)
+        if (itemProto->Socket[i].Color != SOCKET_COLOR_META && GemProps[i]->Type == SOCKET_COLOR_META)
             return;
     }
 
@@ -1003,7 +1009,7 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recvData)
     uint32 OldEnchants[MAX_GEM_SOCKETS];
     for (int i = 0; i < MAX_GEM_SOCKETS; ++i)                //get new and old enchantments
     {
-        GemEnchants[i] = (GemProps[i]) ? GemProps[i]->spellitemenchantement : 0;
+        GemEnchants[i] = (GemProps[i]) ? GemProps[i]->EnchantID : 0;
         OldEnchants[i] = itemTarget->GetEnchantmentId(EnchantmentSlot(SOCK_ENCHANTMENT_SLOT+i));
     }
 
@@ -1036,7 +1042,7 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recvData)
                 {
                     if (SpellItemEnchantmentEntry const* enchantEntry = sSpellItemEnchantmentStore.LookupEntry(OldEnchants[j]))
                     {
-                        if (iGemProto->ItemId == enchantEntry->GemID)
+                        if (iGemProto->ItemId == enchantEntry->SrcItemID)
                         {
                             _player->SendEquipError(EQUIP_ERR_ITEM_UNIQUE_EQUIPPABLE_SOCKETED, itemTarget, nullptr);
                             return;
@@ -1052,7 +1058,7 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recvData)
         {
             if (ItemLimitCategoryEntry const* limitEntry = sItemLimitCategoryStore.LookupEntry(iGemProto->ItemLimitCategory))
             {
-                // NOTE: limitEntry->mode is not checked because if item has limit then it is applied in equip case
+                // NOTE: limitEntry->Flags is not checked because if item has limit then it is applied in equip case
                 for (int j = 0; j < MAX_GEM_SOCKETS; ++j)
                 {
                     if (Gems[j])
@@ -1065,13 +1071,13 @@ void WorldSession::HandleSocketOpcode(WorldPacket& recvData)
                     {
                         // existing gem
                         if (SpellItemEnchantmentEntry const* enchantEntry = sSpellItemEnchantmentStore.LookupEntry(OldEnchants[j]))
-                            if (ItemTemplate const* jProto = sObjectMgr->GetItemTemplate(enchantEntry->GemID))
+                            if (ItemTemplate const* jProto = sObjectMgr->GetItemTemplate(enchantEntry->SrcItemID))
                                 if (iGemProto->ItemLimitCategory == jProto->ItemLimitCategory)
                                     ++limit_newcount;
                     }
                 }
 
-                if (limit_newcount > 0 && uint32(limit_newcount) > limitEntry->maxCount)
+                if (limit_newcount > 0 && uint32(limit_newcount) > limitEntry->Quantity)
                 {
                     _player->SendEquipError(EQUIP_ERR_ITEM_UNIQUE_EQUIPPABLE_SOCKETED, itemTarget, nullptr);
                     return;

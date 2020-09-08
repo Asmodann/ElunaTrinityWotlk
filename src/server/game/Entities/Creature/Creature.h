@@ -27,6 +27,9 @@
 #include "MapObject.h"
 #include <list>
 
+class CreatureOutfit;
+#include <memory>
+
 class CreatureAI;
 class CreatureGroup;
 class Group;
@@ -68,6 +71,13 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         float GetNativeObjectScale() const override;
         void SetObjectScale(float scale) override;
         void SetDisplayId(uint32 modelId) override;
+        uint32 GetDisplayId() const final;
+        void SetDisplayIdRaw(uint32 modelId);
+
+        std::shared_ptr<CreatureOutfit> & GetOutfit() { return m_outfit; };
+        void SetOutfit(std::shared_ptr<CreatureOutfit> const & outfit);
+        void SetMirrorImageFlag(bool on) { if (on) SetFlag(UNIT_FIELD_FLAGS_2, UNIT_FLAG2_MIRROR_IMAGE); else RemoveFlag(UNIT_FIELD_FLAGS_2, UNIT_FLAG2_MIRROR_IMAGE); };
+        void SendMirrorSound(Player* target, uint8 type);
 
         void DisappearAndDie() { ForcedDespawn(0); }
 
@@ -147,12 +157,12 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
         CreatureAI* AI() const { return reinterpret_cast<CreatureAI*>(GetAI()); }
 
         bool SetWalk(bool enable) override;
-        bool SetDisableGravity(bool disable, bool packetOnly = false) override;
+        bool SetDisableGravity(bool disable, bool packetOnly = false, bool updateAnimationTier = true) override;
         bool SetSwim(bool enable) override;
         bool SetCanFly(bool enable, bool packetOnly = false) override;
         bool SetWaterWalking(bool enable, bool packetOnly = false) override;
         bool SetFeatherFall(bool enable, bool packetOnly = false) override;
-        bool SetHover(bool enable, bool packetOnly = false) override;
+        bool SetHover(bool enable, bool packetOnly = false, bool updateAnimationTier = true) override;
 
         uint32 GetShieldBlockValue() const override;
 
@@ -246,8 +256,7 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
 
         void RemoveCorpse(bool setSpawnTime = true, bool destroyForNearbyPlayers = true);
 
-        void DespawnOrUnsummon(uint32 msTimeToDespawn = 0, Seconds forceRespawnTime = 0s);
-        void DespawnOrUnsummon(Milliseconds time, Seconds forceRespawnTime = 0s) { DespawnOrUnsummon(uint32(time.count()), forceRespawnTime); }
+        void DespawnOrUnsummon(Milliseconds timeToDespawn = 0s, Seconds forceRespawnTime = 0s);
 
         time_t const& GetRespawnTime() const { return m_respawnTime; }
         time_t GetRespawnTimeEx() const;
@@ -433,6 +442,8 @@ class TC_GAME_API Creature : public Unit, public GridObject<Creature>, public Ma
             ObjectGuid Target;        // the creature's "real" target while casting
             float Orientation = 0.0f; // the creature's "real" orientation while casting
         } _spellFocusInfo;
+
+        std::shared_ptr<CreatureOutfit> m_outfit;
 
         time_t _lastDamagedTime; // Part of Evade mechanics
         CreatureTextRepeatGroup m_textRepeat;
